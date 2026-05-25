@@ -1,0 +1,4 @@
+• Add settings to show/hide limit and x axis on graphs
+• Always start timer on activated plans
+• Fix new cardio types not working
+• Long press x axis / limit slider to hide

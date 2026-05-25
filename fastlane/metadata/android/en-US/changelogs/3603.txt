@@ -1,0 +1,5 @@
+• feat: add Leave a review link to About page
+• fix: add missing bottom padding across all scrollable pages (#301)
+• fix: resume stopwatch ticker when app returns to foreground
+• fix: use wall-clock time for stopwatch to survive screen-off
+• fix: workout settings bottom padding and stopwatch tab label

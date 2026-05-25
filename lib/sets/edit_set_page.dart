@@ -1,0 +1,788 @@
+import 'dart:io';
+import 'dart:math';
+
+import 'package:drift/drift.dart' hide Column;
+import 'package:file_picker/file_picker.dart';
+import 'package:flexify/animated_fab.dart';
+import 'package:flexify/constants.dart';
+import 'package:flexify/database/database.dart';
+import 'package:flexify/database/gym_sets.dart';
+import 'package:flexify/main.dart';
+import 'package:flexify/plan/plan_state.dart';
+import 'package:flexify/settings/settings_state.dart';
+import 'package:flexify/timer/timer_state.dart';
+import 'package:flexify/utils.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'package:timeago/timeago.dart' as timeago;
+
+class EditSetPage extends StatefulWidget {
+  final GymSet gymSet;
+
+  const EditSetPage({super.key, required this.gymSet});
+
+  @override
+  createState() => _EditSetPageState();
+}
+
+class _EditSetPageState extends State<EditSetPage> {
+  final reps = TextEditingController();
+  final weight = TextEditingController();
+  final orm = TextEditingController();
+  final body = TextEditingController();
+  final distance = TextEditingController();
+  final minutes = TextEditingController();
+  final seconds = TextEditingController();
+  final incline = TextEditingController();
+  final notes = TextEditingController();
+  final repsNode = FocusNode();
+  final distNode = FocusNode();
+  final key = GlobalKey<FormState>();
+
+  var categoryCtrl = TextEditingController();
+  DateTime created = DateTime.now().toLocal();
+  TextEditingController? nameCtrl;
+  List<String> options = [];
+  int? restMs;
+  String? image;
+  String? category;
+
+  late String unit;
+  late bool cardio;
+  late String name;
+
+  void onSelected(String option, bool showBodyWeight) async {
+    final last = await (db.gymSets.select()
+          ..where((tbl) => tbl.name.equals(option) & tbl.hidden.equals(false))
+          ..orderBy(
+            [
+              (u) => OrderingTerm(
+                    expression: u.created,
+                    mode: OrderingMode.desc,
+                  ),
+            ],
+          )
+          ..limit(1))
+        .getSingleOrNull();
+    if (last == null) {
+      final template = await (db.gymSets.select()
+            ..where((tbl) => tbl.name.equals(option))
+            ..limit(1))
+          .getSingleOrNull();
+      return setState(() {
+        name = option;
+        if (template != null) {
+          cardio = template.cardio;
+          unit = template.unit;
+        }
+      });
+    }
+
+    if (showBodyWeight)
+      updateFields(last);
+    else {
+      final bodyWeight = await getBodyWeight();
+      updateFields(
+        last.copyWith(
+          bodyWeight: bodyWeight?.weight,
+        ),
+      );
+    }
+
+    if (cardio) {
+      distNode.requestFocus();
+      selectAll(distance);
+    } else {
+      repsNode.requestFocus();
+      selectAll(reps);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showBodyWeight = context.select<SettingsState, bool>(
+      (settings) => settings.value.showBodyWeight,
+    );
+
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      appBar: buildAppBar(),
+      body: buildBody(showBodyWeight),
+      floatingActionButton: buildSaveButton(),
+    );
+  }
+
+  AppBar buildAppBar() {
+    return AppBar(
+      title: Text(
+        widget.gymSet.id > 0 ? widget.gymSet.name : 'Add set',
+      ),
+      actions: [
+        if (widget.gymSet.id > 0) buildDeleteButton(),
+      ],
+    );
+  }
+
+  Widget buildDeleteButton() {
+    return IconButton(
+      icon: const Icon(Icons.delete),
+      onPressed: () => showDeleteDialog(),
+    );
+  }
+
+  Future<void> showDeleteDialog() async {
+    await showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Confirm Delete'),
+          content: Text(
+            'Are you sure you want to delete ${widget.gymSet.name}?',
+          ),
+          actions: [
+            TextButton.icon(
+              label: const Text('Cancel'),
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(dialogContext),
+            ),
+            TextButton.icon(
+              label: const Text('Delete'),
+              icon: const Icon(Icons.delete),
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await db.delete(db.gymSets).delete(widget.gymSet);
+                if (mounted) Navigator.pop(context);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget buildBody(bool showBodyWeight) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Form(
+        key: key,
+        child: Consumer<SettingsState>(
+          builder: (context, settingsState, child) {
+            final settings = settingsState.value;
+            final showUnits = settings.showUnits;
+            final showCategories = settings.showCategories;
+            final showNotes = settings.showNotes;
+            final showImages = settings.showImages;
+
+            return ListView(
+              children: [
+                autocomplete(showBodyWeight),
+                const SizedBox(height: 8.0),
+                ListTile(
+                  title: const Text('Cardio'),
+                  leading: cardio
+                      ? const Icon(Icons.sports_gymnastics)
+                      : const Icon(Icons.fitness_center),
+                  contentPadding: EdgeInsets.zero,
+                  onTap: () => setState(() {
+                    cardio = !cardio;
+                  }),
+                  trailing: Switch(
+                    value: cardio,
+                    onChanged: (value) => setState(() {
+                      cardio = value;
+                    }),
+                  ),
+                ),
+                ...exerciseFields(),
+                const SizedBox(height: 8.0),
+                if (showBodyWeight && name != 'Weight') ...[
+                  bodyFields(showBodyWeight),
+                  const SizedBox(height: 8.0),
+                ],
+                if (showUnits) ...[
+                  unitSelector(),
+                  const SizedBox(height: 8.0),
+                ],
+                if (showCategories && name != 'Weight') ...[
+                  categorySelector(),
+                  const SizedBox(height: 8.0),
+                ],
+                if (showNotes) ...[
+                  notesField(),
+                  const SizedBox(height: 8.0),
+                ],
+                dateSelector(),
+                if (showImages) ...[
+                  const SizedBox(height: 8.0),
+                  imageField(),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<Widget> exerciseFields() {
+    if (cardio) {
+      return buildCardioFields();
+    } else {
+      return buildStrengthFields();
+    }
+  }
+
+  List<Widget> buildStrengthFields() {
+    return [
+      if (name != 'Weight') buildRepsField(),
+      SizedBox(height: 8.0),
+      buildWeightField(),
+      SizedBox(height: 8.0),
+      if (name != 'Weight') buildORMField(),
+    ];
+  }
+
+  Widget buildRepsField() {
+    return TextFormField(
+      controller: reps,
+      focusNode: repsNode,
+      decoration: const InputDecoration(labelText: 'Reps'),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onTap: () => selectAll(reps),
+      onChanged: (value) => setORM(),
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => selectAll(weight),
+      validator: (value) {
+        if (value == null || value.isEmpty) return 'Required';
+        if (double.tryParse(value) == null) return 'Invalid number';
+        return null;
+      },
+    );
+  }
+
+  Widget buildWeightField() {
+    return TextFormField(
+      controller: weight,
+      decoration: InputDecoration(
+        labelText: name == 'Weight' ? 'Value ' : 'Weight ($unit)',
+      ),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onTap: () => selectAll(weight),
+      onFieldSubmitted: (value) => save(),
+      onChanged: (value) => setORM(),
+      validator: (value) {
+        if (value == null || value.isEmpty) return 'Required';
+        if (double.tryParse(value) == null) return 'Invalid number';
+        return null;
+      },
+    );
+  }
+
+  Widget buildORMField() {
+    return TextField(
+      controller: orm,
+      decoration: const InputDecoration(
+        labelText: 'One rep max (estimate)',
+      ),
+      enabled: false,
+    );
+  }
+
+  List<Widget> buildCardioFields() {
+    return [
+      buildDistanceField(),
+      SizedBox(height: 8.0),
+      duration(),
+      SizedBox(height: 8.0),
+      buildInclineField(),
+    ];
+  }
+
+  Widget buildDistanceField() {
+    if (unit == 'kg' || unit == 'lb' || unit == 'stone')
+      return buildWeightField();
+    return TextFormField(
+      controller: distance,
+      focusNode: distNode,
+      decoration: InputDecoration(
+        labelText: unit == 'kcal' ? 'Amount ($unit)' : 'Distance ($unit)',
+      ),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onTap: () => selectAll(distance),
+      onFieldSubmitted: (value) => selectAll(minutes),
+      textInputAction: TextInputAction.next,
+      validator: (value) {
+        if (value == null || value.isEmpty) return null;
+        if (double.tryParse(value) == null) return 'Invalid number';
+        return null;
+      },
+    );
+  }
+
+  Widget buildInclineField() {
+    return TextFormField(
+      controller: incline,
+      decoration: const InputDecoration(labelText: 'Incline %'),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onTap: () => selectAll(incline),
+      validator: (value) {
+        if (value == null || value.isEmpty) return null;
+        if (int.tryParse(value) == null) return 'Invalid number';
+        return null;
+      },
+    );
+  }
+
+  Widget bodyFields(bool showBodyWeight) {
+    return Visibility(
+      visible: showBodyWeight && name != 'Weight',
+      child: TextFormField(
+        controller: body,
+        decoration: InputDecoration(
+          labelText: 'Body weight ($unit)',
+        ),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        onTap: () => selectAll(body),
+        validator: (value) {
+          if (value == null) return null;
+          if (value.isNotEmpty && double.tryParse(value) == null)
+            return 'Invalid number';
+          return null;
+        },
+      ),
+    );
+  }
+
+  Widget unitSelector() {
+    return Selector<SettingsState, bool>(
+      builder: (context, showUnits, child) => Visibility(
+        visible: showUnits,
+        child: DropdownButtonFormField<String>(
+          decoration: const InputDecoration(labelText: 'Unit'),
+          initialValue: unit,
+          items: getUnitItems(),
+          onChanged: (String? newValue) {
+            setState(() {
+              unit = newValue!;
+            });
+          },
+        ),
+      ),
+      selector: (context, settings) => settings.value.showUnits,
+    );
+  }
+
+  Widget categorySelector() {
+    return Selector<SettingsState, bool>(
+      selector: (context, settings) => settings.value.showCategories,
+      builder: (context, showCategories, child) {
+        if (!showCategories || name == 'Weight') {
+          return const SizedBox();
+        }
+
+        return StreamBuilder(
+          stream: getCategoriesStream(),
+          builder: (context, snapshot) {
+            return Autocomplete<String>(
+              initialValue: TextEditingValue(
+                text: widget.gymSet.category ?? "",
+              ),
+              optionsBuilder: (TextEditingValue textEditingValue) {
+                if (snapshot.data == null) return [];
+                if (textEditingValue.text == '') {
+                  return snapshot.data!;
+                }
+                return snapshot.data!.where((String option) {
+                  return option.toLowerCase().contains(
+                        textEditingValue.text.toLowerCase(),
+                      );
+                });
+              },
+              onSelected: (String selection) {
+                setState(() {
+                  category = selection;
+                });
+              },
+              fieldViewBuilder: (
+                BuildContext context,
+                TextEditingController textEditingController,
+                FocusNode focusNode,
+                VoidCallback onFieldSubmitted,
+              ) {
+                categoryCtrl = textEditingController;
+                return TextFormField(
+                  controller: textEditingController,
+                  focusNode: focusNode,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                  ),
+                  onChanged: (value) => setState(() {
+                    category = value.isNotEmpty ? value : null;
+                  }),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget notesField() {
+    return Selector<SettingsState, bool>(
+      builder: (context, showNotes, child) => Visibility(
+        visible: showNotes,
+        child: TextField(
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Notes',
+          ),
+          controller: notes,
+        ),
+      ),
+      selector: (context, settingsState) => settingsState.value.showNotes,
+    );
+  }
+
+  Widget dateSelector() {
+    return Selector<SettingsState, String>(
+      builder: (context, longDateFormat, child) => ListTile(
+        title: const Text('Created date'),
+        subtitle: Text(
+          longDateFormat == 'timeago'
+              ? timeago.format(created)
+              : DateFormat(longDateFormat).format(created),
+        ),
+        trailing: const Icon(Icons.calendar_today),
+        onTap: () => selectDate(),
+      ),
+      selector: (context, settings) => settings.value.longDateFormat,
+    );
+  }
+
+  Widget buildSaveButton() {
+    return AnimatedFab(
+      onPressed: save,
+      label: const Text("Save"),
+      icon: const Icon(Icons.save),
+    );
+  }
+
+  Selector<SettingsState, bool> imageField() {
+    return Selector<SettingsState, bool>(
+      builder: (context, showImages, child) {
+        return Visibility(
+          visible: showImages,
+          child: Column(
+            children: [
+              if (image == null)
+                TextButton.icon(
+                  onPressed: pick,
+                  label: const Text('Image'),
+                  icon: const Icon(Icons.image),
+                ),
+              if (image != null) ...[
+                const SizedBox(height: 8),
+                Tooltip(
+                  message: 'Long-press to delete',
+                  child: GestureDetector(
+                    onTap: () => pick(),
+                    onLongPress: () => setState(() {
+                      image = null;
+                    }),
+                    child: Image.file(
+                      File(image!),
+                      errorBuilder: (context, error, stackTrace) =>
+                          TextButton.icon(
+                        label: const Text('Image error'),
+                        icon: const Icon(Icons.error),
+                        onPressed: () => pick(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+      selector: (context, settings) => settings.value.showImages,
+    );
+  }
+
+  Row duration() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextFormField(
+            controller: minutes,
+            decoration: const InputDecoration(labelText: 'Minutes'),
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: false,
+            ),
+            onTap: () => selectAll(minutes),
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (value) => selectAll(seconds),
+            validator: (value) {
+              if (value == null || value.isEmpty) return null;
+              if (int.tryParse(value) == null) return 'Invalid number';
+              return null;
+            },
+          ),
+        ),
+        const SizedBox(width: 8.0),
+        Expanded(
+          child: TextFormField(
+            controller: seconds,
+            decoration: const InputDecoration(labelText: 'Seconds'),
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: false,
+            ),
+            onTap: () => selectAll(seconds),
+            textInputAction: TextInputAction.next,
+            onFieldSubmitted: (value) => selectAll(incline),
+            validator: (value) {
+              if (value == null || value.isEmpty) return null;
+              if (int.tryParse(value) == null) return 'Invalid number';
+              return null;
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Autocomplete<String> autocomplete(bool showBodyWeight) {
+    return Autocomplete<String>(
+      optionsBuilder: (textEditingValue) {
+        final searchTerms = textEditingValue.text
+            .toLowerCase()
+            .split(" ")
+            .where((term) => term.isNotEmpty);
+        Iterable<String> opts = options;
+
+        for (final term in searchTerms) {
+          opts = opts.where((option) => option.toLowerCase().contains(term));
+        }
+        return opts;
+      },
+      onSelected: (option) => onSelected(option, showBodyWeight),
+      initialValue: TextEditingValue(text: name),
+      fieldViewBuilder: (
+        BuildContext context,
+        TextEditingController textEditingController,
+        FocusNode focusNode,
+        VoidCallback onFieldSubmitted,
+      ) {
+        nameCtrl = textEditingController;
+        return TextFormField(
+          decoration: const InputDecoration(labelText: 'Name'),
+          controller: textEditingController,
+          textInputAction: TextInputAction.next,
+          onTap: () {
+            selectAll(textEditingController);
+          },
+          focusNode: focusNode,
+          onFieldSubmitted: (String value) {
+            onFieldSubmitted();
+          },
+          onChanged: (value) => setState(() {
+            name = value;
+          }),
+          validator: (value) {
+            if (value == null || value.isEmpty) return 'Required';
+            return null;
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    reps.dispose();
+    repsNode.dispose();
+    weight.dispose();
+    body.dispose();
+    distance.dispose();
+    minutes.dispose();
+    incline.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    updateFields(widget.gymSet);
+    setState(() {
+      created = widget.gymSet.created;
+    });
+
+    (db.gymSets.selectOnly(distinct: true)..addColumns([db.gymSets.name]))
+        .get()
+        .then((results) {
+      final names = results.map((result) => result.read(db.gymSets.name)!);
+      setState(() {
+        options = names.toList();
+      });
+    });
+  }
+
+  void pick() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles();
+    if (result?.files.single == null) return;
+
+    setState(() {
+      image = result?.files.single.path;
+    });
+  }
+
+  Future<void> save() async {
+    if (!key.currentState!.validate()) return;
+
+    final gymSet = widget.gymSet.copyWith(
+      name: name,
+      unit: unit,
+      created: created,
+      reps: double.tryParse(reps.text),
+      weight: double.tryParse(weight.text),
+      bodyWeight: double.tryParse(body.text),
+      distance: double.tryParse(distance.text),
+      duration: (int.tryParse(seconds.text) ?? 0) / 60 +
+          (int.tryParse(minutes.text) ?? 0),
+      cardio: cardio,
+      restMs: Value(restMs),
+      incline: Value(int.tryParse(incline.text)),
+      image: Value(image),
+      notes: Value(notes.text),
+      category: Value(category),
+    );
+
+    final settings = context.read<SettingsState>().value;
+    final planState = context.read<PlanState>();
+
+    if (widget.gymSet.id > 0) {
+      await db.update(db.gymSets).replace(gymSet);
+      if (image != null)
+        (db.update(db.gymSets)..where((u) => u.name.equals(name)))
+            .write(GymSetsCompanion(image: Value(image)));
+      if (!mounted) return;
+      planState.updateDefaults();
+      return Navigator.of(context).pop();
+    } else {
+      var insert = gymSet.toCompanion(false).copyWith(id: const Value.absent());
+      await db.into(db.gymSets).insert(insert);
+      planState.updateDefaults();
+    }
+
+    if (settings.notifications) {
+      final best = await isBest(gymSet);
+      if (best) {
+        final random = Random();
+        final randomMessage =
+            positiveReinforcement[random.nextInt(positiveReinforcement.length)];
+        if (mounted) toast(randomMessage);
+      }
+    }
+
+    if (!settings.restTimers && mounted) return Navigator.of(context).pop();
+    if (!mounted) return;
+    final timer = context.read<TimerState>();
+    if (restMs != null)
+      timer.startTimer(
+        name,
+        Duration(milliseconds: restMs!),
+        settings.alarmSound,
+        settings.vibrate,
+        settings.enableSound,
+      );
+    else
+      timer.startTimer(
+        name,
+        Duration(milliseconds: settings.timerDuration),
+        settings.alarmSound,
+        settings.vibrate,
+        settings.enableSound,
+      );
+    if (!mounted) return;
+    return Navigator.of(context).pop();
+  }
+
+  Future<void> selectTime(DateTime pickedDate) async {
+    final TimeOfDay? pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(created),
+    );
+
+    if (pickedTime != null) {
+      setState(() {
+        created = DateTime(
+          pickedDate.year,
+          pickedDate.month,
+          pickedDate.day,
+          pickedTime.hour,
+          pickedTime.minute,
+        );
+      });
+    }
+  }
+
+  void setORM() {
+    final parsedReps = double.tryParse(reps.text);
+    final parsedWeight = double.tryParse(weight.text);
+    if (parsedReps == null || parsedWeight == null) return;
+    if (parsedReps > 0)
+      orm.text =
+          "${(double.parse(weight.text) / (1.0278 - (0.0278 * double.parse(reps.text)))).toStringAsFixed(2)} $unit";
+    else
+      orm.text =
+          "${(double.parse(weight.text) * (1.0278 - (0.0278 * double.parse(reps.text)))).toStringAsFixed(2)} $unit";
+  }
+
+  List<DropdownMenuItem<String>> getUnitItems() {
+    return [...strengthUnitMenuItems, ...cardioUnitMenuItems];
+  }
+
+  void updateFields(GymSet gymSet) {
+    nameCtrl?.text = gymSet.name;
+    setState(() {
+      category = gymSet.category;
+      image = gymSet.image;
+      name = gymSet.name;
+      unit = gymSet.unit;
+      cardio = gymSet.cardio;
+      restMs = gymSet.restMs;
+    });
+
+    if (gymSet.reps != 0) reps.text = toString(gymSet.reps);
+    weight.text = toString(gymSet.weight);
+    setORM();
+    if (gymSet.bodyWeight != 0) body.text = toString(gymSet.bodyWeight);
+    if (gymSet.duration != 0) {
+      minutes.text = gymSet.duration.floor().toString();
+      seconds.text = ((gymSet.duration * 60) % 60).floor().toString();
+    }
+    if (gymSet.distance != 0) distance.text = toString(gymSet.distance);
+    if (gymSet.incline != null && gymSet.incline != 0)
+      incline.text = gymSet.incline.toString();
+    if (gymSet.category != null && gymSet.category!.isNotEmpty)
+      categoryCtrl.text = gymSet.category!;
+    notes.text = gymSet.notes ?? '';
+  }
+
+  Future<void> selectDate() async {
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: created,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+
+    if (pickedDate != null) {
+      selectTime(pickedDate);
+    }
+  }
+}

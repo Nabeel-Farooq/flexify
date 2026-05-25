@@ -1,0 +1,8 @@
+• Add temp sorting to graph page
+• Fix categories not updating after imports
+• Fix last tooltip on graphs
+• Fix system ui obscuring about page
+• Fix system ui obscuring elements on settings page
+• Name automatic backup files
+• Remove animations from history list
+• Removed divider logic from graphs page

@@ -1,0 +1,4 @@
+• Set max height on format settings
+• feat: add Stopwatch tab (#268)
+• feat: per-exercise graph settings and exercise notes (#257 #267)
+• fix: peek tooltip overlapping search bar and keyboard covering exercise notes

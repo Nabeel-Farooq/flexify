@@ -1,0 +1,10 @@
+• Fix debug banners showing in screenshots
+• Update screenshots
+• Use text button for +1 minute
+• chore: add Android screenshot script with --profile flag
+• feat: improve UI for curve smoothness, timers, plan trailing, input style
+• fix: center timer circle vertically and move +1 min button below circle
+• fix: disable debug banner in MaterialApp
+• fix: eliminate UniqueKey anti-pattern in timer circle widget
+• fix: redesign timer circle with minimal, modern aesthetic
+• fix: replace runApp with tester.pumpWidget in screenshot tests

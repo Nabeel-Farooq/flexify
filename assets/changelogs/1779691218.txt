@@ -1,0 +1,5 @@
+• Fix attaching virustotal link to releases
+• feat: add live previews to settings pickers and fix weight formatting
+• fix: add top padding to start plan page to prevent outlined label clipping
+• fix: consistent 8dp spacing between inputs on start plan page
+• fix: progress position preview uses real TimerProgressIndicator

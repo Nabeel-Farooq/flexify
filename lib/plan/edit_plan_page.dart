@@ -1,0 +1,201 @@
+import 'dart:async';
+
+import 'package:drift/drift.dart' hide Column;
+import 'package:flexify/animated_fab.dart';
+import 'package:flexify/constants.dart';
+import 'package:flexify/database/database.dart';
+import 'package:flexify/day_selector.dart';
+import 'package:flexify/graph/add_exercise_page.dart';
+import 'package:flexify/main.dart';
+import 'package:flexify/plan/exercise_tile.dart';
+import 'package:flexify/plan/plan_state.dart';
+import 'package:flexify/utils.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+class EditPlanPage extends StatefulWidget {
+  final PlansCompanion plan;
+
+  const EditPlanPage({required this.plan, super.key});
+
+  @override
+  createState() => _EditPlanPageState();
+}
+
+class _EditPlanPageState extends State<EditPlanPage> {
+  late List<bool> days;
+  late var exercises = context.read<PlanState>().exercises;
+
+  String search = '';
+
+  final node = FocusNode();
+  final searchCtrl = TextEditingController();
+  final titleCtrl = TextEditingController();
+
+  Future<void> addExercise() async {
+    GymSetsCompanion? gymSet = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => AddExercisePage(name: search),
+      ),
+    );
+    if (gymSet == null || !mounted) return;
+
+    final state = context.read<PlanState>();
+    state.addExercise(gymSet);
+    setState(() {
+      exercises = state.exercises;
+      search = '';
+    });
+    searchCtrl.text = '';
+  }
+
+  Iterable<Widget> get tiles {
+    final match = exercises.where(
+      (pe) => pe.exercise.value.toLowerCase().contains(search.toLowerCase()),
+    );
+
+    if (match.isEmpty)
+      return [
+        const ListTile(title: Text("No exercises found")),
+      ];
+
+    return match.toList().map(
+          (pe) => ExerciseTile(
+            planExercise: pe,
+            onChange: (value) {
+              final id = exercises
+                  .indexWhere((exercise) => exercise.exercise == pe.exercise);
+              if (id == -1) return;
+              setState(() {
+                exercises[id] = value;
+              });
+            },
+          ),
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    exercises = context.select<PlanState, List<PlanExercisesCompanion>>(
+      (value) => value.exercises,
+    );
+
+    var title = widget.plan.days.value.replaceAll(",", ", ");
+    if (title.isNotEmpty)
+      title = title[0].toUpperCase() + title.substring(1).toLowerCase();
+    else
+      title = "Add plan";
+
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      appBar: AppBar(
+        title: Text(title),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: ListView(
+          children: [
+            TextField(
+              decoration: const InputDecoration(
+                labelText: 'Title (optional)',
+              ),
+              controller: titleCtrl,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+            const SizedBox(
+              height: 16.0,
+            ),
+            DaySelector(daySwitches: days),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: SearchBar(
+                leading: const Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Icon(Icons.search),
+                ),
+                textCapitalization: TextCapitalization.sentences,
+                hintText: 'Search exercises...',
+                onChanged: (value) => setState(() {
+                  search = value;
+                }),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: addExercise,
+              ),
+              title: Text(
+                search.isEmpty ? 'Add exercise' : 'Add "$search"',
+              ),
+              onTap: addExercise,
+            ),
+            ...List.generate(tiles.length, (index) => tiles.elementAt(index)),
+            const SizedBox(height: 176),
+          ],
+        ),
+      ),
+      floatingActionButton: AnimatedFab(
+        onPressed: save,
+        label: const Text("Save"),
+        icon: const Icon(Icons.save),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    node.dispose();
+    searchCtrl.dispose();
+    titleCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    titleCtrl.text = widget.plan.title.value ?? "";
+    final list = widget.plan.days.value.split(',');
+    days = weekdays.map((day) => list.contains(day)).toList();
+  }
+
+  Future<void> save() async {
+    final selected = [];
+    for (int i = 0; i < days.length; i++)
+      if (days[i]) selected.add(weekdays[i]);
+
+    if (selected.isEmpty && titleCtrl.text.isEmpty) return toast('Select days');
+
+    if (exercises.where((exercise) => exercise.enabled.value).isEmpty)
+      return toast('Select exercises');
+
+    var newPlan = PlansCompanion.insert(
+      days: selected.join(','),
+      title: Value(titleCtrl.text),
+    );
+
+    if (widget.plan.id.present) {
+      await db.update(db.plans).replace(newPlan.copyWith(id: widget.plan.id));
+      await db.planExercises
+          .deleteWhere((tbl) => tbl.planId.equals(widget.plan.id.value));
+      await db.planExercises.insertAll(
+        exercises.map((pe) => pe.copyWith(planId: widget.plan.id)),
+      );
+    } else {
+      final id = await db.into(db.plans).insert(newPlan);
+      await db.planExercises.insertAll(
+        exercises
+            .where((element) => element.enabled.value)
+            .map((pe) => pe.copyWith(planId: Value(id))),
+      );
+    }
+
+    if (!mounted) return;
+    final state = context.read<PlanState>();
+    state.updatePlans(null);
+    Navigator.pop(context);
+  }
+}

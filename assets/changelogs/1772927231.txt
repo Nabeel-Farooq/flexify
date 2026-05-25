@@ -1,0 +1,3 @@
+• Change selection indicators
+• Fix deleting exercises not cleaning up plan exercises
+• Fix graphs not updating

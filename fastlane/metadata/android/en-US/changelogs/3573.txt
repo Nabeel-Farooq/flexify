@@ -1,0 +1,2 @@
+• ci: automate version bumping and release on push to main
+• fix: prevent duplicate rest alarm when runnable and AlarmManager both fire
